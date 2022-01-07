@@ -1,0 +1,290 @@
+/* --------------------
+   Case Study Questions (WORK IN PROGRESS)
+   --------------------*/
+
+--CLEANING UP DATA
+--Clean customer_orders Table to remove NULL
+SELECT order_id, customer_id, pizza_id, 
+  CASE 
+    WHEN exclusions IS null OR exclusions LIKE 'null' THEN ''
+    ELSE exclusions
+    END AS exclusions,
+  CASE 
+    WHEN extras IS NULL or extras LIKE 'null' THEN ''
+    ELSE extras 
+    END AS extras, 
+  order_time
+INTO t_customer_orders
+FROM pizza_runner.customer_orders;
+
+--Clean runner_orders Table to remove null
+SELECT order_id, runner_id,
+	CASE
+      WHEN pickup_time LIKE 'null' THEN null
+      ELSE pickup_time
+      END AS pickup_time,
+    CASE
+      WHEN distance LIKE 'null' THEN '0'
+      WHEN distance LIKE '%km%' THEN TRIM(distance, 'km')
+      ELSE distance
+      END AS distance,
+    CASE
+      WHEN duration LIKE 'null' THEN '0'
+      WHEN duration LIKE '%minutes%' THEN TRIM(duration, 'minutes')
+      WHEN duration LIKE '%minute%' THEN TRIM(duration, 'minute')
+      WHEN duration LIKE '%mins%' THEN TRIM (duration, 'mins')
+      ELSE duration
+      END AS duration,
+    CASE
+      WHEN cancellation IS null OR cancellation LIKE 'null' THEN ''
+      ELSE cancellation
+      END AS cancellation
+INTO t_runner_orders
+FROM pizza_runner.runner_orders;
+
+ALTER TABLE t_runner_orders
+ALTER COLUMN pickup_time TYPE TIMESTAMP USING pickup_time::timestamp,
+ALTER COLUMN distance TYPE FLOAT USING distance::float, 
+ALTER COLUMN duration TYPE INT USING duration::int;
+
+--A. PIZZA METRICS
+--1. How many pizzas were ordered?
+SELECT COUNT(*)
+FROM t_customer_orders;
+
+--2. How many unique customer orderers were made?
+SELECT COUNT(DISTINCT order_id)
+FROM t_customer_orders;
+
+--3. How many successful orders were delivered by each runner?
+SELECT runner_id, COUNT(*)
+FROM t_runner_orders
+WHERE cancellation = ''
+GROUP BY runner_id;
+
+--4. How many of each type of pizza was delivered?
+SELECT pizza_runner.pizza_names.pizza_name, COUNT(*) AS pizza_count
+FROM t_customer_orders
+JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+JOIN pizza_runner.pizza_names ON t_customer_orders.pizza_id = pizza_runner.pizza_names.pizza_id
+WHERE cancellation =''
+GROUP BY t_customer_orders.pizza_id, pizza_runner.pizza_names.pizza_name
+ORDER BY t_customer_orders.pizza_id;
+
+--5. How many Vegetarian and Meatlovers were ordered by each customer?
+SELECT customer_id, pizza_name, COUNT(*) AS order_count
+FROM t_customer_orders
+JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+JOIN pizza_runner.pizza_names ON t_customer_orders.pizza_id = pizza_runner.pizza_names.pizza_id
+GROUP BY customer_id, pizza_name
+ORDER BY customer_id, pizza_name;
+
+--6. What was the maximum number of pizzas delivered in a single order?
+WITH pizza_counts AS (
+  SELECT t_customer_orders.order_id, COUNT(*) AS pizza_count
+  FROM t_customer_orders
+  JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+  WHERE cancellation = ''
+  GROUP BY t_customer_orders.order_id
+  ORDER BY t_customer_orders.order_id)
+SELECT MAX(pizza_count)
+FROM pizza_counts;
+
+--7. For each customer, how many delivered pizzas had at least 1 change and how many had no changes?
+SELECT customer_id,
+	SUM(CASE
+    	WHEN exclusions != '' OR extras != '' THEN 1
+        ELSE 0
+        END) AS at_least_1_change,
+	SUM(CASE
+    	WHEN exclusions = '' AND extras = '' THEN 1
+        ELSE 0
+        END) AS no_changes
+FROM t_customer_orders
+JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+WHERE cancellation = ''
+GROUP BY customer_id;
+
+--8. How many pizzas were delivered that had both exclusions and extras?
+SELECT COUNT(*)
+FROM t_customer_orders
+JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+WHERE cancellation = '' AND exclusions != '' AND extras != '';
+
+--9. What was the total volume of pizzas ordered for each hour of the day?
+SELECT EXTRACT(hour FROM order_time) AS order_hour, COUNT(*)
+FROM t_customer_orders
+GROUP BY order_hour
+ORDER BY order_hour;
+
+--10. What was the volume of orders for each day of the week?
+SELECT TO_CHAR(order_time, 'Day') AS order_dow, COUNT(*)
+FROM t_customer_orders
+GROUP BY order_dow;
+
+--OR
+
+SELECT EXTRACT(dow FROM order_time) AS order_dow, COUNT(*)
+FROM t_customer_orders
+GROUP BY order_dow
+ORDER BY order_dow;
+
+--B. RUNNER AND CUSTOMER EXPERIENCE
+--1. How many runners signed up for each 1 week period? (i.e. week starts 2021-01-01)
+SELECT TO_CHAR(registration_date, 'WW') AS registration_week, COUNT(*)
+FROM pizza_runner.runners
+GROUP BY registration_week
+ORDER BY registration_week;
+
+--2. What was the average time in minutes it took for each runner to arrive at the Pizza Runner HQ to pickup the order?
+WITH times_per_order AS (
+SELECT runner_id, pickup_time - order_time AS time_per_order
+FROM t_customer_orders
+LEFT JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id)
+SELECT runner_id, TO_CHAR(AVG(time_per_order), 'MI') AS avg_time
+FROM times_per_order
+GROUP BY runner_id
+ORDER BY runner_id;
+
+--3. Is there any relationship between the number of pizzas and how long the order takes to prepare?
+WITH times_per_order AS (
+  SELECT COUNT(pizza_id) AS pizza_count, pickup_time - order_time AS time_per_order
+  FROM t_customer_orders
+  LEFT JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+  WHERE cancellation = ''
+  GROUP BY pickup_time, order_time)
+SELECT pizza_count, TO_CHAR(AVG(time_per_order), 'MI') AS avg_time
+FROM times_per_order
+GROUP BY pizza_count
+ORDER BY pizza_count;
+
+--4. What was the average distance travelled for each customer?
+SELECT customer_id, AVG(distance) AS avg_distance
+FROM t_runner_orders
+LEFT JOIN t_customer_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+WHERE cancellation = ''
+GROUP BY customer_id
+ORDER BY customer_id;
+
+--5. What was the difference between the longest and shortest delivery times for all orders?
+SELECT MAX(duration)-MIN(duration) AS difference
+FROM t_runner_orders
+WHERE cancellation = '';
+
+--6. What was the average speed for each runner for each delivery and do you notice any trend for these values?
+SELECT runner_id, order_id, 60*(distance/duration) AS speed
+FROM t_runner_orders
+WHERE distance != 0 AND duration != 0
+GROUP BY runner_id, order_id, distance, duration
+ORDER BY runner_id, order_id;
+
+--7. What is the successful delivery percentage for each runner?
+SELECT runner_id,
+	ROUND(100 * SUM(CASE
+    	WHEN cancellation = '' THEN 1
+        ELSE 0
+        END) / COUNT(*), 0) AS percentage
+FROM t_runner_orders
+GROUP BY runner_id
+ORDER BY runner_id;
+
+--OR
+
+WITH total_delivered AS (
+  SELECT runner_id, 
+    SUM(CASE
+        WHEN cancellation = '' THEN 1
+        ELSE 0
+        END) AS successful_deliveries,
+    COUNT(t_runner_orders.order_id) AS total_deliveries
+  FROM t_runner_orders
+  GROUP BY t_runner_orders.runner_id)
+SELECT runner_id, 100*CAST(successful_deliveries AS FLOAT)/CAST(total_deliveries AS FLOAT) AS percentage
+FROM total_delivered
+GROUP BY runner_id, successful_deliveries, total_deliveries
+ORDER BY runner_id;
+
+--C. INGREDIENT OPTIMIZATION
+--1. What are the standard ingredients for each pizza?
+SELECT pizza_runner.pizza_recipes.pizza_id,
+CAST(regexp_split_to_table(pizza_runner.pizza_recipes.toppings, E',') AS INT) AS topping_id
+INTO t_pizza_recipes
+FROM pizza_runner.pizza_recipes;
+
+SELECT pizza_name, STRING_AGG(topping_name, ', ') AS topping_names
+FROM t_pizza_recipes
+LEFT JOIN pizza_runner.pizza_toppings ON t_pizza_recipes.topping_id = pizza_runner.pizza_toppings.topping_id
+LEFT JOIN pizza_runner.pizza_names ON t_pizza_recipes.pizza_id = pizza_runner.pizza_names.pizza_id
+GROUP BY pizza_name;
+
+--2. What was the most commonly added extra?
+WITH pizza_extras AS(
+  SELECT order_id,
+  regexp_split_to_table(t_customer_orders.extras, E',') AS extras
+  FROM t_customer_orders)
+SELECT topping_name, COUNT(extras) AS count_extras
+FROM pizza_extras
+LEFT JOIN pizza_runner.pizza_toppings ON pizza_runner.pizza_toppings.topping_id = CAST(extras AS INT)
+WHERE extras != ''
+GROUP BY topping_name
+ORDER BY count_extras DESC
+LIMIT 1;
+
+--3. What was the most common exclusion?
+WITH pizza_exclusions AS(
+  SELECT order_id,
+  regexp_split_to_table(t_customer_orders.exclusions, E',') AS exclusions
+  FROM t_customer_orders)
+SELECT topping_name, COUNT(exclusions) AS count_exclusions
+FROM pizza_exclusions
+LEFT JOIN pizza_runner.pizza_toppings ON pizza_runner.pizza_toppings.topping_id = CAST(exclusions AS INT)
+WHERE exclusions != ''
+GROUP BY topping_name
+ORDER BY count_exclusions DESC
+LIMIT 1;
+
+--4. Generate an order item for each record in the customers_orders table in the format of one of the following:
+
+--5. Generate an alphabetically ordered comma separated ingredient list for each pizza order from the customer_orders table and add a 2x in front of any relevant ingredients.
+-- SELECT *
+-- FROM t_customer_orders;
+
+-- -- WITH pizzas AS(
+--   SELECT order_id, customer_id, pizza_id,
+--   regexp_split_to_table(t_customer_orders.extras, E',') AS extras,
+--   regexp_split_to_table(t_customer_orders.exclusions, E',') AS exclusions
+--   FROM t_customer_orders--)
+
+--6. What is the total quantity of each ingredient used in all delivered pizzas sorted by most frequent first?
+-- SELECT pizza_name, STRING_AGG(topping_name, ', ') AS topping_names
+-- FROM t_pizza_recipes
+-- LEFT JOIN pizza_runner.pizza_toppings ON t_pizza_recipes.topping_id = pizza_runner.pizza_toppings.topping_id
+-- LEFT JOIN pizza_runner.pizza_names ON t_pizza_recipes.pizza_id = pizza_runner.pizza_names.pizza_id
+-- GROUP BY pizza_name;
+
+-- SELECT order_id, customer_id, pizza_recipes.pizza_id, 
+--   regexp_split_to_table(t_customer_orders.exclusions, E',') AS exclusions,
+--   regexp_split_to_table(t_customer_orders.extras, E',') AS extras,
+--   regexp_split_to_table(toppings, E',') AS toppings
+-- INTO pizza_ingredients
+-- FROM t_customer_orders
+-- LEFT JOIN pizza_runner.pizza_recipes ON t_customer_orders.pizza_id = pizza_runner.pizza_recipes.pizza_id;
+
+-- SELECT *
+-- FROM pizza_ingredients;
+
+--D. PRICING AND RATINGS
+--1.If a Meat Lovers pizza costs $12 and Vegetarian costs $10 and there were no charges for changes - how much money has Pizza Runner made so far if there are no delivery fees?
+WITH pizzas_sold AS (
+  SELECT pizza_id, COUNT(*) AS pizza_sold, cancellation
+  FROM t_customer_orders
+  LEFT JOIN t_runner_orders ON t_customer_orders.order_id = t_runner_orders.order_id
+  GROUP BY pizza_id, cancellation)
+SELECT SUM(CASE
+        WHEN pizza_id = 1 THEN 12*pizza_sold
+        WHEN pizza_id = 2 THEN 10*pizza_sold
+        END) AS total_sold
+FROM pizzas_sold
+WHERE cancellation = '';
+
+--2. What if there was an additional $1 charge for any pizza extras?
