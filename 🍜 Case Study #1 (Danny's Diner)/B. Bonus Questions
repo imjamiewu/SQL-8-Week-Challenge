@@ -1,0 +1,46 @@
+ -- JOIN ALL THE THINGS - Recreate the following table output using the available data.
+SELECT
+	sales.customer_id,
+    sales.order_date,
+    menu.product_name,
+    menu.price,
+    CASE
+      WHEN order_date >= join_date THEN 'Y'
+      ELSE 'N'
+    END AS member
+FROM dannys_diner.sales
+JOIN dannys_diner.menu
+ON dannys_diner.sales.product_id = dannys_diner.menu.product_id
+LEFT JOIN dannys_diner.members
+ON dannys_diner.sales.customer_id = dannys_diner.members.customer_id
+ORDER BY customer_id, order_date;
+
+-- RANK ALL THE THINGS - Danny also requires further information about the ranking of customer products, but he purposely does not need the ranking for non-member purchases so he expects null ranking values for the records when customers are not yet part of the loyalty program.
+WITH added_member AS (
+  SELECT
+	sales.customer_id,
+    sales.order_date,
+    menu.product_name,
+    menu.price,
+    CASE
+      WHEN order_date >= join_date THEN 'Y'
+      ELSE 'N'
+    END AS member
+  FROM dannys_diner.sales
+  JOIN dannys_diner.menu
+  ON dannys_diner.sales.product_id = dannys_diner.menu.product_id
+  LEFT JOIN dannys_diner.members
+  ON dannys_diner.sales.customer_id = dannys_diner.members.customer_id
+  ORDER BY customer_id, order_date
+)
+SELECT
+	customer_id,
+    order_date,
+    product_name,
+    price,
+	member,
+    CASE
+    	WHEN member = 'N' THEN null
+        WHEN member = 'Y' THEN DENSERANK() OVER(PARTITION BY sales.customer_id ORDER BY COUNT(product_name) DESC) AS ranking
+    END AS ranking
+FROM added_member;
